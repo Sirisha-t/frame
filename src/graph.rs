@@ -52,23 +52,67 @@ pub fn count_kmers<P: AsRef<Path>>(&mut self, path: P, path2: Option<P>, min_cou
     let mask = self.mask;
     let shared_counts: DashMap<u64, u32> = DashMap::with_capacity(1 << 26);
     
-    let mut reader = Reader::from_path(path)?;
-    let mut sequences: Vec<Vec<u8>> = Vec::new();
-    let mut read_count = 0usize;
+    // let mut reader = Reader::from_path(path)?;
+    // let mut sequences: Vec<Vec<u8>> = Vec::new();
+    // let mut read_count = 0usize;
     
     const CHUNK_SIZE: usize = 5_000_000;
     const EARLY_FILTER_THRESHOLD: u32 = 2;
 
     let start_time = Instant::now();
     
-    while let Some(result) = reader.next() {
-        let record = result.expect("Error reading record");
-        sequences.push(record.seq().to_vec());
-        read_count += 1;
+    // while let Some(result) = reader.next() {
+    //     let record = result.expect("Error reading record");
+    //     sequences.push(record.seq().to_vec());
+    //     read_count += 1;
     
-        // Process chunk when we hit the limit
-        if sequences.len() >= CHUNK_SIZE {
-            log::info!("Processing chunk: reads {}-{}", read_count - sequences.len(), read_count);
+    //     // Process chunk when we hit the limit
+    //     if sequences.len() >= CHUNK_SIZE {
+    //         log::info!("Processing chunk: reads {}-{}", read_count - sequences.len(), read_count);
+
+    // Helper function to count kmers from a single file
+    let count_kmers_from_file = |file_path: &dyn AsRef<Path>| -> std::io::Result<usize> {
+        let reader_io = open_sequence_file(file_path)?;
+        let mut reader = Reader::new(reader_io);
+        let mut sequences: Vec<Vec<u8>> = Vec::new();
+        let mut file_read_count = 0usize;
+
+        while let Some(result) = reader.next() {
+            let record = result.expect("Error reading record");
+            sequences.push(record.seq().to_vec());
+            file_read_count += 1;
+
+            // Process chunk when we hit the limit
+            if sequences.len() >= CHUNK_SIZE {
+                log::info!("Processing chunk: reads {}-{}", file_read_count - sequences.len(), file_read_count);
+
+                sequences.par_iter().for_each(|seq| {
+                    if seq.len() < k {
+                        return;
+                    }
+                    let mut current_packed: u64 = 0;
+                    for i in 0..k {
+                        current_packed = (current_packed << 2) | base_to_bits(seq[i]);
+                    }
+                    *shared_counts.entry(current_packed).or_insert(0) += 1;
+
+                    for i in k..seq.len() {
+                        current_packed = ((current_packed << 2) | base_to_bits(seq[i])) & mask;
+                        *shared_counts.entry(current_packed).or_insert(0) += 1;
+                    }
+                });
+                // **AGGRESSIVE EARLY FILTERING** - remove errors before next chunk
+                log::info!("Pre-filtering: {} k-mers in DashMap", shared_counts.len());
+                shared_counts.retain(|_, count| *count >= EARLY_FILTER_THRESHOLD);
+                log::info!("After early filter: {} k-mers retained", shared_counts.len());
+
+                sequences.clear(); // Free memory
+            }
+        }
+
+        // Process final partial chunk
+        if !sequences.is_empty() {
+            log::info!("Processing final chunk: {} reads", sequences.len());
             
             sequences.par_iter().for_each(|seq| {
                 if seq.len() < k {
@@ -85,39 +129,29 @@ pub fn count_kmers<P: AsRef<Path>>(&mut self, path: P, path2: Option<P>, min_cou
                     *shared_counts.entry(current_packed).or_insert(0) += 1;
                 }
             });
-            // **AGGRESSIVE EARLY FILTERING** - remove errors before next chunk
-            log::info!("Pre-filtering: {} k-mers in DashMap", shared_counts.len());
-            shared_counts.retain(|_, count| *count >= EARLY_FILTER_THRESHOLD);
-            log::info!("After early filter: {} k-mers retained", shared_counts.len());
+            // // **AGGRESSIVE EARLY FILTERING** - remove errors before next chunk
+            // log::info!("Pre-filtering: {} k-mers in DashMap", shared_counts.len());
+            // shared_counts.retain(|_, count| *count >= EARLY_FILTER_THRESHOLD);
+            // log::info!("After early filter: {} k-mers retained", shared_counts.len());
     
-            sequences.clear(); // Free memory
+            // sequences.clear(); // Free memory
         }
-    }
+    };
     
-    // Process final partial chunk
-    if !sequences.is_empty() {
-        log::info!("Processing final chunk: {} reads", sequences.len());
-        
-        sequences.par_iter().for_each(|seq| {
-            if seq.len() < k {
-                return;
-            }
-            let mut current_packed: u64 = 0;
-            for i in 0..k {
-                current_packed = (current_packed << 2) | base_to_bits(seq[i]);
-            }
-            *shared_counts.entry(current_packed).or_insert(0) += 1;
     
-            for i in k..seq.len() {
-                current_packed = ((current_packed << 2) | base_to_bits(seq[i])) & mask;
-                *shared_counts.entry(current_packed).or_insert(0) += 1;
-            }
-        });
-    }
+     // Process first file
+     let mut total_read_count = count_kmers_from_file(&path)?;
+
+     // Process second file if provided (paired-end)
+     if let Some(p) = path2 {
+         let paired_count = count_kmers_from_file(&p)?;
+         total_read_count += paired_count;
+         log::info!("Paired-end mode: processed {} reads from R2", paired_count);
+     }
 
     let count_time = start_time.elapsed();
     
-    log::info!("Read {} total sequences, counting k-mers in parallel...", read_count);
+    log::info!("Read {} total sequences, counting k-mers in parallel...", total_read_count);
     info!(
         "Counting completed in {:.2}s ",
         count_time.as_secs_f64(),
@@ -163,44 +197,83 @@ pub fn count_kmers<P: AsRef<Path>>(&mut self, path: P, path2: Option<P>, min_cou
     log::info!("K-mers after filtering (min_count={}): {} [took {:.2}s]", 
         min_count, self.counts.len(), filter_time.as_secs_f64());
         
-        Ok(read_count)
-}
+        Ok(total_read_count)  
+    }
 
     /// Build de Bruijn graph from FASTQ file (Pass 2)
-    pub fn build_graph<P: AsRef<Path>>(&mut self, path: P, min_count: u32) -> std::io::Result<()> {
+    //pub fn build_graph<P: AsRef<Path>>(&mut self, path: P, min_count: u32) -> std::io::Result<()> {
+    pub fn build_graph<P: AsRef<Path>>(&mut self, path: P, path2: Option<P>, min_count: u32) -> std::io::Result<()> {
         log::info!("Pass 2: Building de Bruijn graph");
 
-        let mut reader = Reader::from_path(path)?;
-        while let Some(result) = reader.next() {
-            let record = result.expect("Error reading record");
-            let seq = record.seq();
+        // let mut reader = Reader::from_path(path)?;
+        // while let Some(result) = reader.next() {
+        //     let record = result.expect("Error reading record");
+        //     let seq = record.seq();
+         // Helper function to build graph from a single file
+         let build_graph_from_file = |file_path: &dyn AsRef<Path>, kmers: &mut KmerGraph, counts: &KmerCount, k: usize, mask: u64, min_count: u32| -> std::io::Result<()> {
+            let reader_io = open_sequence_file(file_path)?;
+            let mut reader = Reader::new(reader_io);
+            let mut sequence_count = 0usize;
 
-            if seq.len() < self.k + 1 {
+            // if seq.len() < self.k + 1 {
+            //     continue;
+            // }
+            while let Some(result) = reader.next() {
+                let record = result.expect("Error reading record");
+                let seq = record.seq();
+                sequence_count += 1;
+
+            // let mut current_packed: u64 = 0;
+            // for i in 0..self.k {
+            //     current_packed = (current_packed << 2) | base_to_bits(seq[i]);
+            // }
+            if seq.len() < k + 1 {
                 continue;
             }
 
+            // for i in self.k..seq.len() {
+            //     let next_base = seq[i];
+            //     let next_packed = ((current_packed << 2) | base_to_bits(next_base)) & self.mask;
             let mut current_packed: u64 = 0;
-            for i in 0..self.k {
-                current_packed = (current_packed << 2) | base_to_bits(seq[i]);
-            }
-
-            for i in self.k..seq.len() {
-                let next_base = seq[i];
-                let next_packed = ((current_packed << 2) | base_to_bits(next_base)) & self.mask;
-
-                if *self.counts.get(&current_packed).unwrap_or(&0) >= min_count
-                    && *self.counts.get(&next_packed).unwrap_or(&0) >= min_count
-                {
-                    let entry = self.kmers.entry(current_packed).or_insert(0);
-                    *entry |= base_to_bit_mask(next_base);
+                for i in 0..k {
+                    current_packed = (current_packed << 2) | base_to_bits(seq[i]);
                 }
-                current_packed = next_packed;
+
+                // 
+                
+                for i in k..seq.len() {
+                    let next_base = seq[i];
+                    let next_packed = ((current_packed << 2) | base_to_bits(next_base)) & mask;
+
+                    if *counts.get(&current_packed).unwrap_or(&0) >= min_count
+                        && *counts.get(&next_packed).unwrap_or(&0) >= min_count
+                    {
+                        let entry = kmers.entry(current_packed).or_insert(0);
+                        *entry |= base_to_bit_mask(next_base);
+                    }
+                    current_packed = next_packed;
+                }
             }
-        }
+            log::info!("Processed {} sequences from file", sequence_count);
+            Ok(());
+        };
+
+      
+    
+
+    // Process first file
+    build_graph_from_file(&path, &mut self.kmers, &self.counts, self.k, self.mask, min_count)?;
+
+    // Process second file if provided (paired-end)
+    if let Some(p) = path2 {
+        log::info!("Processing paired-end R2 file...");
+        build_graph_from_file(&p, &mut self.kmers, &self.counts, self.k, self.mask, min_count)?;
 
         log::info!("Graph size: {} nodes", self.kmers.len());
         Ok(())
     }
+}
+
 
     /// Prune tips from the graph (short dead-end branches)
     pub fn prune_tips(&mut self) -> usize {
@@ -332,7 +405,6 @@ pub fn remove_bubbles(&mut self) -> usize {
     log::info!("Removed {} bubbles", bubbles_removed);
     bubbles_removed
 }
-
 }
 
 #[cfg(test)]
