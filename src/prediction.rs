@@ -3,6 +3,7 @@
 use frag_gene_scan_rs::hmm::{Global, Local};
 use frag_gene_scan_rs::dna::Nuc;
 use std::path::PathBuf;
+use log::info;
 
 /// Gene prediction statistics
 #[derive(Debug, Clone)]
@@ -29,9 +30,15 @@ pub fn predict_genes(
     global: &Box<Global>,
     locals: &Vec<Local>,
 ) -> frag_gene_scan_rs::gene::ReadPrediction {
-    let nseq: Vec<Nuc> = seq
+    // let nseq: Vec<Nuc> = seq
+    //     .iter()
+    //     .map(|&b| b.to_ascii_uppercase())
+    //     .map(Nuc::from)
+    //     .collect();
+
+        let nseq: Vec<Nuc> = seq
         .iter()
-        .map(|&b| b.to_ascii_uppercase())
+        .copied()
         .map(Nuc::from)
         .collect();
 
