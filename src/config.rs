@@ -10,6 +10,8 @@ pub struct PipelineConfig {
     pub hmm_train_dir: PathBuf,
     pub hmm_model: PathBuf,
     pub input_file: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_file_2: Option<PathBuf>,
     pub output_dir: PathBuf,
     pub rescue_batch_size: usize,
 }
@@ -24,6 +26,7 @@ impl PipelineConfig {
             hmm_train_dir: PathBuf::from("./lib/FragGeneScanRs/train"),
             hmm_model: PathBuf::from("illumina_5"),
             input_file,
+            input_file_2: None,
             output_dir: PathBuf::from("./frame_output"),
             rescue_batch_size: 50_000,
         }
@@ -61,6 +64,11 @@ impl PipelineConfig {
 
         if !self.input_file.exists() {
             return Err(format!("input_file not found: {}", self.input_file.display()));
+        }
+        if let Some(ref file2) = self.input_file_2 {
+            if !file2.exists() {
+                return Err(format!("input_file_2 not found: {}", file2.display()));
+            }
         }
 
         if !self.hmm_train_dir.exists() {

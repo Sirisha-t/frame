@@ -7,6 +7,8 @@ pub mod prediction;
 pub mod io;
 pub mod config;
 pub mod utils;
+pub mod reader;
+
 
 pub use config::PipelineConfig;
 pub use graph::Graph;
