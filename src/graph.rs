@@ -136,6 +136,7 @@ pub fn count_kmers<P: AsRef<Path>>(&mut self, path: P, path2: Option<P>, min_cou
     
             // sequences.clear(); // Free memory
         }
+        Ok(file_read_count)
     };
     
     
@@ -255,7 +256,7 @@ pub fn count_kmers<P: AsRef<Path>>(&mut self, path: P, path2: Option<P>, min_cou
                 }
             }
             log::info!("Processed {} sequences from file", sequence_count);
-            Ok(());
+            Ok(())
         };
 
       
@@ -269,9 +270,9 @@ pub fn count_kmers<P: AsRef<Path>>(&mut self, path: P, path2: Option<P>, min_cou
         log::info!("Processing paired-end R2 file...");
         build_graph_from_file(&p, &mut self.kmers, &self.counts, self.k, self.mask, min_count)?;
 
-        log::info!("Graph size: {} nodes", self.kmers.len());
-        Ok(())
     }
+    log::info!("Graph size: {} nodes", self.kmers.len());
+    Ok(())
 }
 
 

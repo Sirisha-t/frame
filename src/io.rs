@@ -7,6 +7,7 @@ pub struct PipelineOutput {
     pub gff_buffer: Vec<u8>,
     pub aa_buffer: Vec<u8>,
     pub dna_buffer: Vec<u8>,
+    pub header_map_buffer: Vec<u8>,
 }
 
 impl PipelineOutput {
@@ -15,6 +16,8 @@ impl PipelineOutput {
             gff_buffer: Vec::with_capacity(1024 * 1024), // 1MB initial
             aa_buffer: Vec::with_capacity(1024 * 1024),
             dna_buffer: Vec::with_capacity(1024 * 1024),
+            header_map_buffer: Vec::with_capacity(512 * 1024), // 512KB for headers
+
         }
     }
 
@@ -36,6 +39,15 @@ impl PipelineOutput {
 
         let mut dna_file = File::create(dir.join("genes.fna"))?;
         dna_file.write_all(&self.dna_buffer)?;
+        
+        // Write header mapping if available
+        if !self.header_map_buffer.is_empty() {
+            let mut header_file = File::create(dir.join("read_headers.tsv"))?;
+            header_file.write_all(b"original_header\tread_id\n")?;
+            header_file.write_all(&self.header_map_buffer)?;
+            log::info!("Header mapping written to read_headers.tsv");
+        }
+
 
         log::info!("Predictions written to {}", dir.display());
         Ok(())
@@ -94,7 +106,7 @@ impl PipelineOutput {
 
     /// Get total buffer size in bytes
     pub fn total_size(&self) -> usize {
-        self.gff_buffer.len() + self.aa_buffer.len() + self.dna_buffer.len()
+        self.gff_buffer.len() + self.aa_buffer.len() + self.dna_buffer.len() + self.header_map_buffer.len()
     }
 }
 

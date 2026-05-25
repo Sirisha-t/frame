@@ -21,6 +21,7 @@ struct ThreadResult {
     gff: Vec<u8>,
     aa: Vec<u8>,
     dna: Vec<u8>,
+    header_map: Vec<u8>,
     total_reads: usize,
     assembled: usize,
     rescued: usize,
@@ -47,6 +48,7 @@ struct Args {
     // input: PathBuf,
      /// Input FASTQ/FASTA file (R1 for paired-end)
      #[arg(value_name = "fasta/fastq file", help = "Path to input sequencing reads (can be gzipped)")]
+     input: PathBuf,
 
      // Second input file (R2 for paired-end reads)
     #[arg(
@@ -109,7 +111,7 @@ struct Args {
     #[arg(short = 't', 
     long, 
     default_value = "16", 
-    help = "Threads (0 = all available)")]
+    help = "Threads (default=16)")]
     threads: usize,
     }
 
@@ -244,9 +246,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     phase4_time.as_secs_f64(),
     //     coding_unitigs
     // );
-
-
-
 
     let phase4_start = Instant::now();
 
@@ -437,14 +436,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let read_id = coding_unitigs + i;
 
-            let _ = prediction::predict_and_write_read(
+            //let _ = prediction::predict_and_write_read(
+            let _ = prediction::predict_and_write_read_with_header(
                 read_id,
+                &record.head,
                 seq,
                 &global,
                 &locals,
                 &mut local.gff,
                 &mut local.aa,
                 &mut local.dna,
+                &mut local.header_map,
             )
             .map(|is_coding| {
                 if is_coding {
@@ -461,6 +463,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             a.gff.extend(b.gff);
             a.aa.extend(b.aa);
             a.dna.extend(b.dna);
+            a.header_map.extend(b.header_map);
 
             a.total_reads += b.total_reads;
             a.assembled += b.assembled;
@@ -474,6 +477,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     output.gff_buffer = results.gff;
     output.aa_buffer = results.aa;
     output.dna_buffer = results.dna;
+    output.header_map_buffer = results.header_map;
 
     // write rescue reads
     if !output.is_empty() {

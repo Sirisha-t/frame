@@ -92,3 +92,34 @@ pub fn predict_and_write_read(
         Ok(false)
     }
 }
+
+pub fn predict_and_write_read_with_header(
+    read_id: usize,
+    original_header: &[u8],
+    sequence: &[u8],
+    global: &Box<Global>,
+    locals: &Vec<Local>,
+    gff_buffer: &mut Vec<u8>,
+    aa_buffer: &mut Vec<u8>,
+    dna_buffer: &mut Vec<u8>,
+    header_map_buffer: &mut Vec<u8>,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let header = format!("read_{}", read_id).into_bytes();
+
+    let prediction = predict_genes(sequence, header, global, locals);
+
+    if !prediction.genes.is_empty() {
+        prediction.gff(gff_buffer)?;
+        prediction.protein(aa_buffer, false)?;
+        prediction.dna(dna_buffer, false)?;
+
+        // Store mapping: original_header\tread_id\n
+        let original_header_str = String::from_utf8_lossy(original_header);
+        let mapping_line = format!("{}\t{}\n", original_header_str, read_id);
+        header_map_buffer.extend_from_slice(mapping_line.as_bytes());
+
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
